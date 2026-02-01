@@ -1,0 +1,303 @@
+version: '3.8'
+
+services:
+  # Database Services
+  postgres:
+    image: timescale/timescaledb:latest-pg17
+    container_name: volttrack-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-volttrack}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-volttrack}
+      POSTGRES_DB: ${POSTGRES_DB:-volttrack}
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - volttrack-network
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-volttrack}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis/redis-stack:latest
+    container_name: volttrack-redis
+    restart: unless-stopped
+    ports:
+      - '${REDIS_PORT:-6379}:6379'
+      - '${REDIS_INSIGHT_PORT:-8001}:8001'
+    volumes:
+      - redis_data:/data
+    networks:
+      - volttrack-network
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Database Migration
+  migration:
+    image: ghcr.io/6cclab/volttrack/${VOLTTRACK_ENV:-dev}/db-migrations:latest
+    container_name: volttrack-migrations
+    restart: 'no'
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-volttrack}:${POSTGRES_PASSWORD:-volttrack}@postgres:5432/${POSTGRES_DB:-volttrack}?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - volttrack-network
+
+  # Application Services
+  auth:
+    image: ghcr.io/6cclab/volttrack/${VOLTTRACK_ENV:-dev}/auth:latest
+    container_name: volttrack-auth
+    restart: unless-stopped
+    ports:
+      - '${AUTH_PORT:-3002}:3002'
+    environment:
+      PORT: 3002
+      NODE_ENV: ${NODE_ENV:-production}
+      DATABASE_URL: postgres://${POSTGRES_USER:-volttrack}:${POSTGRES_PASSWORD:-volttrack}@postgres:5432/${POSTGRES_DB:-volttrack}?schema=public
+      REDIS_URL: redis://redis:6379
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL}
+      CORS_CONFIG: ${CORS_CONFIG}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN}
+      TRUSTED_ORIGINS: ${TRUSTED_ORIGINS}
+      PRETTY_PRINT: ${PRETTY_PRINT:-0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+    networks:
+      - volttrack-network
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q --spider http://localhost:3002/health || exit 1']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  api:
+    image: ghcr.io/6cclab/volttrack/${VOLTTRACK_ENV:-dev}/api:latest
+    container_name: volttrack-api
+    restart: unless-stopped
+    ports:
+      - '${API_PORT:-3001}:3001'
+    environment:
+      PORT: 3001
+      NODE_ENV: ${NODE_ENV:-production}
+      DATABASE_URL: postgres://${POSTGRES_USER:-volttrack}:${POSTGRES_PASSWORD:-volttrack}@postgres:5432/${POSTGRES_DB:-volttrack}?schema=public
+      REDIS_URL: redis://redis:6379
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL}
+      AUTH_SERVICE_URL: ${AUTH_SERVICE_URL:-http://auth:3002}
+      CORS_CONFIG: ${CORS_CONFIG}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN}
+      TRUSTED_ORIGINS: ${TRUSTED_ORIGINS}
+      MAPBOX_KEY: ${MAPBOX_KEY}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      S3_ENDPOINT: ${S3_ENDPOINT}
+      AWS_BUCKET: ${AWS_BUCKET:-volttrack-reports}
+      AWS_REGION: ${AWS_REGION:-garage}
+      FORCE_PATH_STYLE: ${FORCE_PATH_STYLE:-true}
+      PRETTY_PRINT: ${PRETTY_PRINT:-0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+    networks:
+      - volttrack-network
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q --spider http://localhost:3001/health || exit 1']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  api-worker:
+    image: ghcr.io/6cclab/volttrack/${VOLTTRACK_ENV:-dev}/api:latest
+    container_name: volttrack-api-worker
+    restart: unless-stopped
+    command: ['pnpm', 'start:worker']
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      DATABASE_URL: postgres://${POSTGRES_USER:-volttrack}:${POSTGRES_PASSWORD:-volttrack}@postgres:5432/${POSTGRES_DB:-volttrack}?schema=public
+      REDIS_URL: redis://redis:6379
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL}
+      AUTH_SERVICE_URL: ${AUTH_SERVICE_URL:-http://auth:3002}
+      MAPBOX_KEY: ${MAPBOX_KEY}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      S3_ENDPOINT: ${S3_ENDPOINT}
+      AWS_BUCKET: ${AWS_BUCKET:-volttrack-reports}
+      AWS_REGION: ${AWS_REGION:-garage}
+      FORCE_PATH_STYLE: ${FORCE_PATH_STYLE:-true}
+      PRETTY_PRINT: ${PRETTY_PRINT:-0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+      api:
+        condition: service_healthy
+    networks:
+      - volttrack-network
+
+  ws-gateway:
+    image: ghcr.io/6cclab/volttrack/${VOLTTRACK_ENV:-dev}/websocket-gateway:latest
+    container_name: volttrack-websocket-gateway
+    restart: unless-stopped
+    ports:
+      - '${WEBSOCKET_PORT:-3003}:3003'
+    environment:
+      PORT: 3003
+      NODE_ENV: ${NODE_ENV:-production}
+      DATABASE_URL: postgres://${POSTGRES_USER:-volttrack}:${POSTGRES_PASSWORD:-volttrack}@postgres:5432/${POSTGRES_DB:-volttrack}?schema=public
+      REDIS_URL: redis://redis:6379
+      AUTH_SERVICE_URL: ${AUTH_SERVICE_URL:-http://auth:3002}
+      PRETTY_PRINT: ${PRETTY_PRINT:-0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+    networks:
+      - volttrack-network
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q --spider http://localhost:3003/health || exit 1']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  event-bus:
+    image: ghcr.io/6cclab/volttrack/${VOLTTRACK_ENV:-dev}/event-bus:latest
+    container_name: volttrack-event-bus
+    restart: unless-stopped
+    ports:
+      - '${EVENT_BUS_PORT:-3004}:3004'
+    environment:
+      PORT: 3004
+      NODE_ENV: ${NODE_ENV:-production}
+      DATABASE_URL: postgres://${POSTGRES_USER:-volttrack}:${POSTGRES_PASSWORD:-volttrack}@postgres:5432/${POSTGRES_DB:-volttrack}?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+    networks:
+      - volttrack-network
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q --spider http://localhost:3004/health || exit 1']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  client:
+    image: ghcr.io/6cclab/volttrack/${VOLTTRACK_ENV:-dev}/client:latest
+    container_name: volttrack-client
+    restart: unless-stopped
+    ports:
+      - '${CLIENT_PORT:-3000}:3000'
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      WEBSOCKET_URL: ${WEBSOCKET_URL}
+      SOCKET_URL: ${SOCKET_URL}
+      API_URL: ${API_URL}
+      API_V2_URL: ${API_V2_URL:-${API_URL}}
+      MAPBOX_PK: ${MAPBOX_KEY}
+      AUTH_SERVICE_URL: ${AUTH_SERVICE_URL:-http://auth:3002}
+    depends_on:
+      api:
+        condition: service_healthy
+      ws-gateway:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+    networks:
+      - volttrack-network
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q --spider http://localhost:3000/health || exit 1']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # S3-Compatible Storage (Optional - use --profile s3 to enable)
+  garage:
+    profiles: ['s3']
+    image: dxflrs/garage:v1.0.1
+    container_name: volttrack-garage
+    restart: unless-stopped
+    command: server
+    environment:
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:-change-this-to-a-secure-random-string}
+    ports:
+      - '${GARAGE_S3_PORT:-3900}:3900'
+      - '${GARAGE_WEB_PORT:-3902}:3902'
+    volumes:
+      - garage_data:/var/lib/garage
+      - ./garage.toml:/etc/garage.toml:ro
+    networks:
+      - volttrack-network
+    healthcheck:
+      test: ['CMD-SHELL', 'garage status || exit 1']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  garage-init:
+    profiles: ['s3']
+    image: dxflrs/garage:v1.0.1
+    container_name: volttrack-garage-init
+    restart: 'no'
+    entrypoint: ['/bin/sh', '/init-garage.sh']
+    environment:
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:-change-this-to-a-secure-random-string}
+      GARAGE_BUCKET: ${AWS_BUCKET:-volttrack-reports}
+      GARAGE_ACCESS_KEY: ${AWS_ACCESS_KEY_ID:-GK_volttrack}
+      GARAGE_SECRET_KEY: ${AWS_SECRET_ACCESS_KEY}
+    volumes:
+      - ./init-garage.sh:/init-garage.sh:ro
+      - ./garage.toml:/etc/garage.toml:ro
+    depends_on:
+      garage:
+        condition: service_healthy
+    networks:
+      - volttrack-network
+
+networks:
+  volttrack-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  garage_data:
+    driver: local

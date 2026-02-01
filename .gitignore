@@ -1,0 +1,9 @@
+# Environment file with secrets
+.env
+
+# Backups
+backups/
+*.tar.gz
+
+# Logs
+*.log
