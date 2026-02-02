@@ -51,11 +51,13 @@ cp .env.example .env
 ### 2. Start Services
 
 **Option A: Without S3 storage** (reports feature disabled)
+
 ```bash
 docker compose up -d
 ```
 
 **Option B: With Garage S3** (recommended)
+
 ```bash
 docker compose --profile s3 up -d
 ```
@@ -98,6 +100,7 @@ VOLTTRACK_ENV=prd
 ```
 
 Available tags:
+
 - `dev` - Latest from develop branch
 - `prd` - Latest from main branch
 - Specific commit SHA for pinned versions
@@ -107,6 +110,7 @@ Available tags:
 Update these based on how you're accessing VoltTrack:
 
 **For localhost access:**
+
 ```env
 BETTER_AUTH_URL=http://localhost
 API_URL=http://localhost:3001
@@ -114,6 +118,7 @@ WEBSOCKET_URL=ws://localhost:3003/ws
 ```
 
 **For production with reverse proxy:**
+
 ```env
 BETTER_AUTH_URL=https://volttrack.yourdomain.com
 API_URL=https://api.yourdomain.com
@@ -136,6 +141,7 @@ docker logs volttrack-garage-init
 ```
 
 Configuration in `.env`:
+
 ```env
 S3_ENDPOINT=http://garage:3900
 AWS_REGION=garage
@@ -152,10 +158,11 @@ AWS_ACCESS_KEY_ID=<your-access-key>
 AWS_SECRET_ACCESS_KEY=<your-secret-key>
 AWS_BUCKET=volttrack-reports
 AWS_REGION=us-east-1
-FORCE_PATH_STYLE=false
+FORCE_PATH_STYLE=false <set to true if using anything other than S3>
 ```
 
 Then start without the s3 profile:
+
 ```bash
 docker compose up -d
 ```
@@ -178,7 +185,7 @@ Example nginx configuration:
 server {
     listen 443 ssl http2;
     server_name api.yourdomain.com;
-    
+
     location / {
         proxy_pass http://localhost:3001;
         proxy_set_header Host $host;
@@ -190,7 +197,7 @@ server {
 server {
     listen 443 ssl http2;
     server_name ws.yourdomain.com;
-    
+
     location /ws {
         proxy_pass http://localhost:3003;
         proxy_http_version 1.1;
@@ -203,7 +210,7 @@ server {
 server {
     listen 443 ssl http2;
     server_name volttrack.yourdomain.com;
-    
+
     location / {
         proxy_pass http://localhost:3000;
         proxy_set_header Host $host;
@@ -264,6 +271,7 @@ docker stats
 ```
 
 Health check endpoints:
+
 - API: http://localhost:3001/health
 - Auth: http://localhost:3002/health
 - WebSocket: http://localhost:3003/health
@@ -317,11 +325,13 @@ docker compose run --rm migration
 ### Services won't start
 
 Check logs for errors:
+
 ```bash
 docker compose logs
 ```
 
 Common issues:
+
 - Port conflicts (another service using 3000-3004, 5432, 6379)
 - Missing required environment variables
 - Insufficient disk space or memory
@@ -329,11 +339,13 @@ Common issues:
 ### Database connection errors
 
 Ensure postgres is healthy:
+
 ```bash
 docker compose ps postgres
 ```
 
 Check postgres logs:
+
 ```bash
 docker compose logs postgres
 ```
@@ -341,11 +353,13 @@ docker compose logs postgres
 ### Garage S3 issues
 
 Check Garage status:
+
 ```bash
 docker compose exec garage garage status
 ```
 
 Re-run initialization:
+
 ```bash
 docker compose up -d garage-init
 docker compose logs garage-init
@@ -354,6 +368,7 @@ docker compose logs garage-init
 ### Authentication errors
 
 Verify `BETTER_AUTH_SECRET` is set and matches across all services. Check auth service logs:
+
 ```bash
 docker compose logs auth
 ```
@@ -392,7 +407,6 @@ services:
 
 For issues and questions:
 
-- Check the main project README: `../README.md`
 - Review application logs: `docker compose logs`
 - Open an issue on GitHub
 
